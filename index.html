@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Gym Tracker</title>
+  <meta name="description" content="Workout log personale" />
+  <meta name="theme-color" content="#0d0d0d" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Gym Tracker" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0d0d0d; color: #e0e0e0; font-family: 'DM Mono', 'Courier New', monospace; min-height: 100vh; }
+    #root { min-height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script>
+const { useState, useEffect } = React;
+
+// ─── DATI PROGRAMMA ────────────────────────────────────────────────────────────
+const DAYS = [
+  {
+    id: "g1", label: "G1", title: "Push", color: "#e85d26",
+    exercises: [
+      { name: "Chest press",            target: "42.5kg × 4 × 8",        rest: 75 },
+      { name: "Shoulder press manubri", target: "8kg × 3 × 10",          rest: 60 },
+      { name: "Alzate laterali seduto", target: "6kg × 3 × 12",          rest: 45 },
+      { name: "Pushdown corda",         target: "12.5kg × 3 × 12",       rest: 45 },
+      { name: "Croci ai cavi",          target: "10kg × 3 × 12",         rest: 45 },
+    ],
+    cardio: "Cyclette 15 min | resistenza 6",
+  },
+  {
+    id: "g2", label: "G2", title: "Lower + Core", color: "#2563eb",
+    exercises: [
+      { name: "Leg press",     target: "100kg × 4 × 10",   rest: 90 },
+      { name: "Leg curl",      target: "25kg × 3 × 12",    rest: 75 },
+      { name: "Stacco rumeno", target: "18.5kg × 3 × 10",  rest: 75 },
+      { name: "Leg extension", target: "27.5kg × 3 × 15",  rest: 60 },
+      { name: "Plank",         target: "3 × 60 sec",       rest: 45 },
+    ],
+    cardio: "Tapis roulant 20 min | inclinazione 6 | 5.0-5.2 km/h",
+  },
+  {
+    id: "g3", label: "G3", title: "Pull", color: "#16a34a",
+    exercises: [
+      { name: "Lat machine presa neutra", target: "40kg × 4 × 10",          rest: 75 },
+      { name: "Low Row",                  target: "16kg × 3 × 12",           rest: 60 },
+      { name: "Face pull cavo",           target: "8kg × 3 × 15",            rest: 45 },
+      { name: "Curl alternati seduto",    target: "6kg × 3 × 12 per lato",   rest: 45 },
+      { name: "Reverse fly seduto",       target: "5kg × 3 × 12",            rest: 45 },
+    ],
+    cardio: "Cyclette 15 min | resistenza 6",
+  },
+];
+
+const OUTCOME = ["ok", "faticosa", "incompleta"];
+const SPALLA  = ["stabile", "fastidio lieve", "fastidio importante"];
+const ENERGIA = ["bassa", "media", "alta"];
+const FIATO   = ["buono", "affannoso"];
+
+const outcomeColor = { ok: "#16a34a", faticosa: "#d97706", incompleta: "#dc2626" };
+const spallaColor  = { stabile: "#16a34a", "fastidio lieve": "#d97706", "fastidio importante": "#dc2626" };
+
+const STORAGE_KEY = "gym_tracker_history_v1";
+
+function makeEmptyLog(day) {
+  return {
+    date: "", warmup: null,
+    exercises: day.exercises.map(() => ({ outcome: null })),
+    cardioComplete: null, cardioDuration: "",
+    rpe: "", energia: null, fiato: null, spalla: null, notes: "",
+  };
+}
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch { return []; }
+}
+function saveHistory(h) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(h)); } catch {}
+}
+
+// ─── CHIP ──────────────────────────────────────────────────────────────────────
+function Chip({ options, value, onChange, colorMap }) {
+  return React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+    options.map(o =>
+      React.createElement("button", {
+        key: o,
+        onClick: () => onChange(value === o ? null : o),
+        style: {
+          padding: "4px 12px", borderRadius: 20,
+          border: `1.5px solid ${value === o ? (colorMap ? colorMap[o] : "#e85d26") : "#333"}`,
+          background: value === o ? (colorMap ? colorMap[o] + "22" : "#e85d2622") : "transparent",
+          color: value === o ? (colorMap ? colorMap[o] : "#e85d26") : "#aaa",
+          fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+          fontWeight: value === o ? 700 : 400, transition: "all 0.15s",
+        }
+      }, o)
+    )
+  );
+}
+
+// ─── APP ───────────────────────────────────────────────────────────────────────
+function App() {
+  const [activeDay, setActiveDay] = useState(0);
+  const [logs, setLogs]           = useState(() => DAYS.map(makeEmptyLog));
+  const [view, setView]           = useState("log");
+  const [history, setHistory]     = useState(loadHistory);
+  const [saved, setSaved]         = useState(false);
+  const [timer, setTimer]         = useState(null);
+
+  const day = DAYS[activeDay];
+  const log = logs[activeDay];
+
+  // Timer countdown
+  useEffect(() => {
+    if (!timer?.running) return;
+    const id = setInterval(() => {
+      setTimer(t => {
+        if (!t || t.seconds <= 1) { clearInterval(id); return { ...t, seconds: 0, running: false }; }
+        return { ...t, seconds: t.seconds - 1 };
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [timer?.running]);
+
+  function startTimer(s) { setTimer({ seconds: s, total: s, running: true }); }
+  function stopTimer()   { setTimer(null); }
+
+  function updateLog(patch) {
+    setLogs(prev => { const n = [...prev]; n[activeDay] = { ...n[activeDay], ...patch }; return n; });
+  }
+  function updateExercise(i, outcome) {
+    const ex = [...log.exercises];
+    ex[i] = { ...ex[i], outcome: ex[i].outcome === outcome ? null : outcome };
+    updateLog({ exercises: ex });
+  }
+
+  function doSaveLog() {
+    const entry = { ...log, dayId: day.id, dayTitle: day.title, timestamp: Date.now() };
+    const nh = [entry, ...history];
+    setHistory(nh);
+    saveHistory(nh);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  function generateText() {
+    let t = `📅 DATA: ${log.date || "__/__/__"}\n`;
+    t += `🏋️ GIORNO: ${day.label} – ${day.title}\n\n`;
+    t += `🔥 RISCALDAMENTO: ${log.warmup === true ? "fatto" : log.warmup === false ? "saltato" : "__"}\n\n`;
+    t += `ESERCIZI:\n`;
+    day.exercises.forEach((ex, i) => {
+      t += `• ${ex.name.padEnd(22)} → ${ex.target} | ultima serie: ${log.exercises[i].outcome || "__"}\n`;
+    });
+    t += `\n🫀 CARDIO: ${day.cardio} | ${log.cardioComplete === true ? "completato" : log.cardioComplete === false ? `accorciato (${log.cardioDuration}min)` : "__"}\n\n`;
+    t += `📊 RPE GENERALE: ${log.rpe || "__"}/10\n`;
+    t += `💪 ENERGIA: ${log.energia || "__"}\n`;
+    t += `🫁 FIATO: ${log.fiato || "__"}\n`;
+    t += `🫀 SPALLA SINISTRA: ${log.spalla || "__"}\n`;
+    t += `💬 NOTE LIBERE: ${log.notes || ""}`;
+    return t;
+  }
+
+  function copyText() {
+    navigator.clipboard?.writeText(generateText()).catch(() => {});
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  function deleteHistoryEntry(i) {
+    const nh = history.filter((_, idx) => idx !== i);
+    setHistory(nh);
+    saveHistory(nh);
+  }
+
+  const progress = (() => {
+    let filled = 0, total = log.exercises.length + 5;
+    log.exercises.forEach(e => { if (e.outcome) filled++; });
+    if (log.warmup !== null) filled++;
+    if (log.cardioComplete !== null) filled++;
+    if (log.rpe) filled++;
+    if (log.energia) filled++;
+    if (log.spalla) filled++;
+    return Math.round((filled / total) * 100);
+  })();
+
+  // ─── RENDER ──────────────────────────────────────────────────────────────────
+  const s = {
+    card: { background: "#111", border: "1px solid #1a1a1a", borderRadius: 10, padding: 14, marginBottom: 12 },
+    label: { fontSize: 11, color: "#555", letterSpacing: 2, textTransform: "uppercase", marginBottom: 8, display: "block" },
+  };
+
+  return React.createElement("div", { style: { background: "#0d0d0d", minHeight: "100vh", color: "#e0e0e0", fontFamily: "'DM Mono','Courier New',monospace" } },
+
+    // HEADER
+    React.createElement("div", { style: { background: "#111", borderBottom: "1px solid #222", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 50 } },
+      React.createElement("div", null,
+        React.createElement("div", { style: { fontSize: 10, color: "#555", letterSpacing: 3, textTransform: "uppercase" } }, "Fase 2"),
+        React.createElement("div", { style: { fontSize: 18, fontWeight: 700, color: "#fff" } }, "Gym Tracker"),
+      ),
+      React.createElement("div", { style: { display: "flex", gap: 8 } },
+        ["log", "history"].map(v =>
+          React.createElement("button", {
+            key: v, onClick: () => setView(v),
+            style: { padding: "6px 12px", borderRadius: 6, border: `1px solid ${view === v ? day.color : "#333"}`, background: view === v ? day.color + "22" : "transparent", color: view === v ? day.color : "#555", fontSize: 11, cursor: "pointer", fontFamily: "inherit", textTransform: "uppercase", letterSpacing: 1 }
+          }, v)
+        )
+      )
+    ),
+
+    // LOG VIEW
+    view === "log" && React.createElement("div", { style: { padding: 16, maxWidth: 560, margin: "0 auto" } },
+
+      // Day selector
+      React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 16 } },
+        DAYS.map((d, i) =>
+          React.createElement("button", {
+            key: d.id, onClick: () => setActiveDay(i),
+            style: { flex: 1, padding: "10px 0", borderRadius: 8, border: `2px solid ${activeDay === i ? d.color : "#222"}`, background: activeDay === i ? d.color + "15" : "#111", color: activeDay === i ? d.color : "#444", cursor: "pointer", fontFamily: "inherit" }
+          },
+            React.createElement("div", { style: { fontSize: 15, fontWeight: 700 } }, d.label),
+            React.createElement("div", { style: { fontSize: 10, marginTop: 2, opacity: 0.8 } }, d.title),
+          )
+        )
+      ),
+
+      // Progress bar
+      React.createElement("div", { style: { marginBottom: 16 } },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: 4 } },
+          React.createElement("span", { style: { fontSize: 10, color: "#444", letterSpacing: 2, textTransform: "uppercase" } }, "Completamento"),
+          React.createElement("span", { style: { fontSize: 11, color: day.color } }, `${progress}%`),
+        ),
+        React.createElement("div", { style: { height: 3, background: "#222", borderRadius: 2 } },
+          React.createElement("div", { style: { height: "100%", width: `${progress}%`, background: day.color, borderRadius: 2, transition: "width 0.3s" } })
+        )
+      ),
+
+      // Date
+      React.createElement("div", { style: { ...s.card } },
+        React.createElement("span", { style: s.label }, "📅 Data"),
+        React.createElement("input", {
+          type: "date", value: log.date,
+          onChange: e => updateLog({ date: e.target.value }),
+          style: { background: "#0d0d0d", border: "1px solid #222", borderRadius: 6, color: "#e0e0e0", padding: "8px 12px", fontSize: 13, fontFamily: "inherit", outline: "none", width: "100%" }
+        })
+      ),
+
+      // Warmup
+      React.createElement("div", { style: s.card },
+        React.createElement("span", { style: s.label }, "🔥 Riscaldamento"),
+        React.createElement("div", { style: { display: "flex", gap: 8 } },
+          [["fatto", true, "#16a34a"], ["saltato", false, "#dc2626"]].map(([lbl, val, col]) =>
+            React.createElement("button", {
+              key: lbl, onClick: () => updateLog({ warmup: log.warmup === val ? null : val }),
+              style: { padding: "6px 16px", borderRadius: 20, border: `1.5px solid ${log.warmup === val ? col : "#333"}`, background: log.warmup === val ? col + "22" : "transparent", color: log.warmup === val ? col : "#555", fontSize: 12, cursor: "pointer", fontFamily: "inherit", fontWeight: log.warmup === val ? 700 : 400 }
+            }, lbl)
+          )
+        )
+      ),
+
+      // Exercises
+      React.createElement("div", { style: s.card },
+        React.createElement("span", { style: s.label }, "💪 Esercizi"),
+        day.exercises.map((ex, i) =>
+          React.createElement("div", { key: i, style: { paddingBottom: 12, marginBottom: 12, borderBottom: i < day.exercises.length - 1 ? "1px solid #1a1a1a" : "none" } },
+            React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 } },
+              React.createElement("div", null,
+                React.createElement("div", { style: { fontSize: 13, color: "#ddd", fontWeight: 600 } }, ex.name),
+                React.createElement("div", { style: { fontSize: 11, color: day.color, marginTop: 2 } }, ex.target),
+              ),
+              React.createElement("button", {
+                onClick: () => startTimer(ex.rest),
+                style: { padding: "4px 10px", borderRadius: 6, border: "1px solid #2a2a2a", background: "#1a1a1a", color: "#666", fontSize: 11, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", marginLeft: 8 }
+              }, `⏱ ${ex.rest}s`)
+            ),
+            React.createElement(Chip, { options: OUTCOME, value: log.exercises[i].outcome, onChange: v => updateExercise(i, v), colorMap: outcomeColor })
+          )
+        )
+      ),
+
+      // Cardio
+      React.createElement("div", { style: s.card },
+        React.createElement("span", { style: s.label }, "🫀 Cardio"),
+        React.createElement("div", { style: { fontSize: 11, color: day.color, marginBottom: 10 } }, day.cardio),
+        React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } },
+          [["completato", true, "#16a34a"], ["accorciato", false, "#d97706"]].map(([lbl, val, col]) =>
+            React.createElement("button", {
+              key: lbl, onClick: () => updateLog({ cardioComplete: log.cardioComplete === val ? null : val }),
+              style: { padding: "6px 16px", borderRadius: 20, border: `1.5px solid ${log.cardioComplete === val ? col : "#333"}`, background: log.cardioComplete === val ? col + "22" : "transparent", color: log.cardioComplete === val ? col : "#555", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }
+            }, lbl)
+          ),
+          log.cardioComplete === false && React.createElement("input", {
+            placeholder: "min effettivi", value: log.cardioDuration,
+            onChange: e => updateLog({ cardioDuration: e.target.value }),
+            style: { background: "#0d0d0d", border: "1px solid #333", borderRadius: 6, color: "#e0e0e0", padding: "5px 10px", fontSize: 12, fontFamily: "inherit", outline: "none", width: 100 }
+          })
+        )
+      ),
+
+      // Params
+      React.createElement("div", { style: s.card },
+        React.createElement("span", { style: s.label }, "📊 Parametri"),
+        React.createElement("div", { style: { marginBottom: 12 } },
+          React.createElement("div", { style: { fontSize: 11, color: "#555", marginBottom: 6 } }, "RPE"),
+          React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+            [5,6,7,8,9,10].map(n =>
+              React.createElement("button", {
+                key: n, onClick: () => updateLog({ rpe: log.rpe === String(n) ? "" : String(n) }),
+                style: { width: 36, height: 36, borderRadius: 6, border: `1.5px solid ${log.rpe === String(n) ? day.color : "#333"}`, background: log.rpe === String(n) ? day.color + "22" : "transparent", color: log.rpe === String(n) ? day.color : "#555", fontSize: 13, cursor: "pointer", fontFamily: "inherit", fontWeight: 700 }
+              }, n)
+            )
+          )
+        ),
+        React.createElement("div", { style: { marginBottom: 12 } },
+          React.createElement("div", { style: { fontSize: 11, color: "#555", marginBottom: 6 } }, "Energia"),
+          React.createElement(Chip, { options: ENERGIA, value: log.energia, onChange: v => updateLog({ energia: v }) })
+        ),
+        React.createElement("div", { style: { marginBottom: 12 } },
+          React.createElement("div", { style: { fontSize: 11, color: "#555", marginBottom: 6 } }, "Fiato"),
+          React.createElement(Chip, { options: FIATO, value: log.fiato, onChange: v => updateLog({ fiato: v }) })
+        ),
+        React.createElement("div", null,
+          React.createElement("div", { style: { fontSize: 11, color: "#555", marginBottom: 6 } }, "🫀 Spalla sinistra"),
+          React.createElement(Chip, { options: SPALLA, value: log.spalla, onChange: v => updateLog({ spalla: v }), colorMap: spallaColor })
+        )
+      ),
+
+      // Notes
+      React.createElement("div", { style: s.card },
+        React.createElement("span", { style: s.label }, "💬 Note libere"),
+        React.createElement("textarea", {
+          value: log.notes, onChange: e => updateLog({ notes: e.target.value }),
+          placeholder: "Qualcosa da segnalare...", rows: 3,
+          style: { width: "100%", background: "#0d0d0d", border: "1px solid #222", borderRadius: 6, color: "#e0e0e0", padding: "8px 12px", fontSize: 13, fontFamily: "inherit", outline: "none", resize: "none" }
+        })
+      ),
+
+      // Actions
+      React.createElement("div", { style: { display: "flex", gap: 10, paddingBottom: 100 } },
+        React.createElement("button", {
+          onClick: copyText,
+          style: { flex: 1, padding: "14px 0", borderRadius: 8, border: `1.5px solid ${day.color}`, background: "transparent", color: day.color, fontSize: 13, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }
+        }, saved ? "✓ Copiato!" : "📋 Copia testo"),
+        React.createElement("button", {
+          onClick: doSaveLog,
+          style: { flex: 1, padding: "14px 0", borderRadius: 8, border: "none", background: day.color, color: "#fff", fontSize: 13, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }
+        }, "💾 Salva log")
+      )
+    ),
+
+    // HISTORY VIEW
+    view === "history" && React.createElement("div", { style: { padding: 16, maxWidth: 560, margin: "0 auto", paddingBottom: 40 } },
+      React.createElement("div", { style: { fontSize: 11, color: "#444", letterSpacing: 3, textTransform: "uppercase", marginBottom: 16 } }, `Storico — ${history.length} sessioni`),
+      history.length === 0
+        ? React.createElement("div", { style: { textAlign: "center", color: "#333", padding: 60, fontSize: 13 } }, "Nessun log salvato ancora.")
+        : history.map((entry, i) => {
+            const d = DAYS.find(d => d.id === entry.dayId);
+            const rpeCol = entry.rpe >= 8 ? "#dc2626" : entry.rpe >= 7 ? "#d97706" : "#16a34a";
+            return React.createElement("div", {
+              key: i,
+              style: { background: "#111", border: `1px solid ${d?.color}33`, borderLeft: `3px solid ${d?.color}`, borderRadius: 10, padding: 14, marginBottom: 10 }
+            },
+              React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } },
+                React.createElement("div", null,
+                  React.createElement("span", { style: { color: d?.color, fontWeight: 700, fontSize: 14 } }, entry.dayId?.toUpperCase()),
+                  React.createElement("span", { style: { color: "#555", fontSize: 12, marginLeft: 8 } }, entry.dayTitle),
+                ),
+                React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
+                  React.createElement("span", { style: { fontSize: 11, color: "#444" } }, entry.date || new Date(entry.timestamp).toLocaleDateString("it-IT")),
+                  React.createElement("button", {
+                    onClick: () => deleteHistoryEntry(i),
+                    style: { background: "transparent", border: "none", color: "#444", fontSize: 14, cursor: "pointer", padding: "0 2px" }
+                  }, "✕")
+                )
+              ),
+              React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
+                entry.rpe && React.createElement("span", { style: { fontSize: 12, color: rpeCol } }, `RPE ${entry.rpe}`),
+                entry.spalla && React.createElement("span", { style: { fontSize: 12, color: spallaColor[entry.spalla] } }, `Spalla: ${entry.spalla}`),
+                entry.energia && React.createElement("span", { style: { fontSize: 12, color: "#666" } }, `Energia: ${entry.energia}`),
+              ),
+              entry.notes && React.createElement("div", { style: { fontSize: 12, color: "#555", marginTop: 6, fontStyle: "italic" } }, entry.notes)
+            );
+          })
+    ),
+
+    // TIMER OVERLAY
+    timer && React.createElement("div", {
+      style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", background: "#1a1a1a", border: `2px solid ${timer.seconds === 0 ? "#16a34a" : day.color}`, borderRadius: 16, padding: "14px 24px", display: "flex", alignItems: "center", gap: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.7)", zIndex: 100, minWidth: 220 }
+    },
+      React.createElement("div", { style: { flex: 1 } },
+        React.createElement("div", { style: { fontSize: 10, color: "#555", letterSpacing: 2, textTransform: "uppercase", marginBottom: 4 } }, timer.seconds === 0 ? "✅ Recupero finito!" : "⏱ Recupero in corso"),
+        React.createElement("div", { style: { fontSize: 28, fontWeight: 700, color: timer.seconds === 0 ? "#16a34a" : day.color, letterSpacing: -1 } },
+          `${String(Math.floor(timer.seconds / 60)).padStart(2,"0")}:${String(timer.seconds % 60).padStart(2,"0")}`
+        ),
+        React.createElement("div", { style: { marginTop: 6, height: 3, background: "#333", borderRadius: 2 } },
+          React.createElement("div", { style: { height: "100%", borderRadius: 2, background: timer.seconds === 0 ? "#16a34a" : day.color, width: `${((timer.total - timer.seconds) / timer.total) * 100}%`, transition: "width 1s linear" } })
+        )
+      ),
+      React.createElement("button", { onClick: stopTimer, style: { background: "transparent", border: "1px solid #333", color: "#666", borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontFamily: "inherit", fontSize: 14 } }, "✕")
+    )
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+
+// ─── SERVICE WORKER ────────────────────────────────────────────────────────────
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
+  </script>
+</body>
+</html>
