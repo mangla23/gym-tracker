@@ -117,9 +117,34 @@ function saveTimer(t) {
 }
 
 // ─── AUDIO ─────────────────────────────────────────────────────────────────────
+let _audioCtx = null;
+
+function getAudioCtx() {
+  if (!_audioCtx) {
+    _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (_audioCtx.state === "suspended") {
+    _audioCtx.resume();
+  }
+  return _audioCtx;
+}
+
+// Call this on user tap to unlock audio on iOS
+function unlockAudio() {
+  try {
+    const ctx = getAudioCtx();
+    // Play a silent buffer to unlock
+    const buf = ctx.createBuffer(1, 1, 22050);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    src.start(0);
+  } catch {}
+}
+
 function playBeep() {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = getAudioCtx();
     const beepDuration = 0.3;
     const gap = 0.15;
     for (let i = 0; i < 4; i++) {
@@ -129,10 +154,11 @@ function playBeep() {
       gain.connect(ctx.destination);
       osc.frequency.value = 880;
       osc.type = "sine";
-      gain.gain.setValueAtTime(0.6, ctx.currentTime + i * (beepDuration + gap));
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * (beepDuration + gap) + beepDuration);
-      osc.start(ctx.currentTime + i * (beepDuration + gap));
-      osc.stop(ctx.currentTime + i * (beepDuration + gap) + beepDuration);
+      const t = ctx.currentTime + i * (beepDuration + gap);
+      gain.gain.setValueAtTime(0.7, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + beepDuration);
+      osc.start(t);
+      osc.stop(t + beepDuration);
     }
   } catch {}
 }
@@ -203,6 +229,7 @@ function App() {
   }, [timer?.seconds, timer?.running]);
 
   function startTimer(s) {
+    unlockAudio(); // sblocca AudioContext su iOS al momento del tap
     const endTime = Date.now() + s * 1000;
     const t = { endTime, total: s, seconds: s, running: true };
     setTimer(t);
