@@ -70,7 +70,10 @@ const FIATO   = ["buono", "affannoso"];
 const outcomeColor = { ok: "#16a34a", faticosa: "#d97706", incompleta: "#dc2626" };
 const spallaColor  = { stabile: "#16a34a", "fastidio lieve": "#d97706", "fastidio importante": "#dc2626" };
 
-const STORAGE_KEY = "gym_tracker_history_v1";
+const STORAGE_KEY  = "gym_tracker_history_v1";
+const LOGS_KEY     = "gym_tracker_logs_v1";
+const TIMER_KEY    = "gym_tracker_timer_v1";
+const DAY_KEY      = "gym_tracker_day_v1";
 
 function makeEmptyLog(day) {
   return {
@@ -86,6 +89,52 @@ function loadHistory() {
 }
 function saveHistory(h) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(h)); } catch {}
+}
+function loadLogs() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LOGS_KEY));
+    if (!saved || saved.length !== DAYS.length) return DAYS.map(makeEmptyLog);
+    return saved;
+  } catch { return DAYS.map(makeEmptyLog); }
+}
+function saveLogs(logs) {
+  try { localStorage.setItem(LOGS_KEY, JSON.stringify(logs)); } catch {}
+}
+function loadTimer() {
+  try {
+    const t = JSON.parse(localStorage.getItem(TIMER_KEY));
+    if (!t || !t.endTime) return null;
+    const remaining = Math.round((t.endTime - Date.now()) / 1000);
+    if (remaining <= 0) return null;
+    return { endTime: t.endTime, total: t.total, seconds: remaining, running: true };
+  } catch { return null; }
+}
+function saveTimer(t) {
+  try {
+    if (t) localStorage.setItem(TIMER_KEY, JSON.stringify(t));
+    else localStorage.removeItem(TIMER_KEY);
+  } catch {}
+}
+
+// ─── AUDIO ─────────────────────────────────────────────────────────────────────
+function playBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const beepDuration = 0.3;
+    const gap = 0.15;
+    for (let i = 0; i < 4; i++) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 880;
+      osc.type = "sine";
+      gain.gain.setValueAtTime(0.6, ctx.currentTime + i * (beepDuration + gap));
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * (beepDuration + gap) + beepDuration);
+      osc.start(ctx.currentTime + i * (beepDuration + gap));
+      osc.stop(ctx.currentTime + i * (beepDuration + gap) + beepDuration);
+    }
+  } catch {}
 }
 
 // ─── CHIP ──────────────────────────────────────────────────────────────────────
@@ -110,33 +159,65 @@ function Chip({ options, value, onChange, colorMap }) {
 
 // ─── APP ───────────────────────────────────────────────────────────────────────
 function App() {
-  const [activeDay, setActiveDay] = useState(0);
-  const [logs, setLogs]           = useState(() => DAYS.map(makeEmptyLog));
-  const [view, setView]           = useState("log");
-  const [history, setHistory]     = useState(loadHistory);
-  const [saved, setSaved]         = useState(false);
-  const [timer, setTimer]         = useState(null);
+  const [activeDay, setActiveDay] = useState(() => {
+    try { return parseInt(localStorage.getItem(DAY_KEY) || "0"); } catch { return 0; }
+  });
+  const [logs, setLogs]       = useState(loadLogs);
+  const [view, setView]       = useState("log");
+  const [history, setHistory] = useState(loadHistory);
+  const [saved, setSaved]     = useState(false);
+  const [timer, setTimer]     = useState(loadTimer);
+  const [beeped, setBeeped]   = useState(false);
 
   const day = DAYS[activeDay];
   const log = logs[activeDay];
 
-  // Timer countdown
+  // Persist activeDay
+  useEffect(() => {
+    try { localStorage.setItem(DAY_KEY, String(activeDay)); } catch {}
+  }, [activeDay]);
+
+  // Timer — uses endTime for background persistence
   useEffect(() => {
     if (!timer?.running) return;
     const id = setInterval(() => {
-      setTimer(t => {
-        if (!t || t.seconds <= 1) { clearInterval(id); return { ...t, seconds: 0, running: false }; }
-        return { ...t, seconds: t.seconds - 1 };
-      });
-    }, 1000);
+      const remaining = Math.round((timer.endTime - Date.now()) / 1000);
+      if (remaining <= 0) {
+        setTimer(t => ({ ...t, seconds: 0, running: false }));
+        saveTimer(null);
+        clearInterval(id);
+      } else {
+        setTimer(t => ({ ...t, seconds: remaining }));
+      }
+    }, 500);
     return () => clearInterval(id);
-  }, [timer?.running]);
+  }, [timer?.running, timer?.endTime]);
 
-  function startTimer(s) { setTimer({ seconds: s, total: s, running: true }); }
-  function stopTimer()   { setTimer(null); }
+  // Audio alert when timer hits 0
+  useEffect(() => {
+    if (timer && timer.seconds === 0 && !timer.running && !beeped) {
+      playBeep();
+      setBeeped(true);
+    }
+    if (timer?.running) setBeeped(false);
+  }, [timer?.seconds, timer?.running]);
+
+  function startTimer(s) {
+    const endTime = Date.now() + s * 1000;
+    const t = { endTime, total: s, seconds: s, running: true };
+    setTimer(t);
+    saveTimer(t);
+    setBeeped(false);
+  }
+  function stopTimer() { setTimer(null); saveTimer(null); }
 
   function updateLog(patch) {
-    setLogs(prev => { const n = [...prev]; n[activeDay] = { ...n[activeDay], ...patch }; return n; });
+    setLogs(prev => {
+      const n = [...prev];
+      n[activeDay] = { ...n[activeDay], ...patch };
+      saveLogs(n);
+      return n;
+    });
   }
   function updateExercise(i, outcome) {
     const ex = [...log.exercises];
