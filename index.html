@@ -192,6 +192,7 @@ function App() {
   const [view, setView]       = useState("log");
   const [history, setHistory] = useState(loadHistory);
   const [saved, setSaved]     = useState(false);
+  const [showReset, setShowReset] = useState(false);
   const [timer, setTimer]     = useState(loadTimer);
   const [beeped, setBeeped]   = useState(false);
 
@@ -237,6 +238,15 @@ function App() {
     setBeeped(false);
   }
   function stopTimer() { setTimer(null); saveTimer(null); }
+
+  function resetAllLogs() {
+    const empty = DAYS.map(makeEmptyLog);
+    setLogs(empty);
+    saveLogs(empty);
+    setTimer(null);
+    saveTimer(null);
+    setShowReset(false);
+  }
 
   function updateLog(patch) {
     setLogs(prev => {
@@ -316,6 +326,10 @@ function App() {
         React.createElement("div", { style: { fontSize: 18, fontWeight: 700, color: "#fff" } }, "Gym Tracker"),
       ),
       React.createElement("div", { style: { display: "flex", gap: 8 } },
+        React.createElement("button", {
+            onClick: () => setShowReset(true),
+            style: { padding: "6px 10px", borderRadius: 6, border: "1px solid #333", background: "transparent", color: "#555", fontSize: 14, cursor: "pointer", fontFamily: "inherit" }
+          }, "🗑"),
         ["log", "history"].map(v =>
           React.createElement("button", {
             key: v, onClick: () => setView(v),
@@ -498,6 +512,27 @@ function App() {
               entry.notes && React.createElement("div", { style: { fontSize: 12, color: "#555", marginTop: 6, fontStyle: "italic" } }, entry.notes)
             );
           })
+    ),
+
+    // RESET MODAL
+    showReset && React.createElement("div", {
+      style: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: 24 }
+    },
+      React.createElement("div", { style: { background: "#111", border: "1px solid #333", borderRadius: 16, padding: 28, maxWidth: 320, width: "100%", textAlign: "center" } },
+        React.createElement("div", { style: { fontSize: 32, marginBottom: 12 } }, "🗑"),
+        React.createElement("div", { style: { fontSize: 16, fontWeight: 700, color: "#fff", marginBottom: 8 } }, "Reset tutti i dati?"),
+        React.createElement("div", { style: { fontSize: 13, color: "#666", marginBottom: 24 } }, "Verranno cancellati tutti i valori compilati oggi. Lo storico salvato non verrà toccato."),
+        React.createElement("div", { style: { display: "flex", gap: 10 } },
+          React.createElement("button", {
+            onClick: () => setShowReset(false),
+            style: { flex: 1, padding: "12px 0", borderRadius: 8, border: "1px solid #333", background: "transparent", color: "#aaa", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }
+          }, "Annulla"),
+          React.createElement("button", {
+            onClick: resetAllLogs,
+            style: { flex: 1, padding: "12px 0", borderRadius: 8, border: "none", background: "#dc2626", color: "#fff", fontSize: 13, cursor: "pointer", fontFamily: "inherit", fontWeight: 700 }
+          }, "Sì, resetta")
+        )
+      )
     ),
 
     // TIMER OVERLAY
